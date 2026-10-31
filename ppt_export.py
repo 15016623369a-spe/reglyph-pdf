@@ -278,7 +278,7 @@ class PPTExporter:
             if isinstance(item, dict):
                 fs = item.get("font_size")
                 try:
-                    font_size = int(fs) if fs is not None else None
+                    font_size = float(fs) if fs is not None else None
                 except Exception:
                     font_size = None
             if font_size is None:
@@ -288,7 +288,7 @@ class PPTExporter:
                 font_size = int(calculated_size * 0.70)
             elif layout["layout_scale"] != 1.0:
                 font_size = max(1, int(round(float(font_size) * float(layout["layout_scale"]))))
-            p.font.size = Pt(int(font_size))
+            p.font.size = Pt(float(font_size))
 
             print(f"    文本框尺寸: {w}x{h}px, 字体: {font_size}pt")
 

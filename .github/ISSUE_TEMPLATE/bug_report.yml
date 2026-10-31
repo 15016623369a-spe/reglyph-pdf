@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible editing, installation, or export problem.
+body:
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use a synthetic sample. Do not upload customer documents or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Sanitized error message or screenshot

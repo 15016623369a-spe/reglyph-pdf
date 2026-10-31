@@ -1,0 +1,72 @@
+name: Desktop verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  editor:
+    name: Editor / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      QT_QPA_PLATFORM: offscreen
+      IPDF_CPU_THREADS: '2'
+      PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-editor.txt
+      - name: Install editor environment
+        run: python -m pip install -r requirements-editor.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Check source syntax
+        run: python -m compileall -q .
+      - name: Validate edit contracts
+        run: python tests/test_contract.py
+      - name: Validate platform configuration
+        run: python tests/test_platform.py
+      - name: Exercise desktop transactions
+        run: python tests/test_desktop.py
+      - name: Exercise project and document exports
+        run: python tests/test_project_export.py
+      - name: Generate synthetic demonstration
+        run: python scripts/generate_demo.py
+
+  repair:
+    name: Repair environment / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-repair.txt
+      - name: Install isolated repair dependencies
+        run: python -m pip install -r requirements-repair.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Check repair runtime imports
+        run: python -c "import torch, cv2, PIL, iopaint; from iopaint.model_manager import ModelManager; print('Repair runtime imports OK')"

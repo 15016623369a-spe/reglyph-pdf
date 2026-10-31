@@ -123,6 +123,7 @@ class OCREngine:
         # 尝试初始化
         last_error = None
         for params in params_list:
+            params["cpu_threads"]=max(1,int(os.environ.get("IPDF_CPU_THREADS","2")))
             try:
                 self.ocr = PaddleOCR(**params)
                 print("[OK] OCR 引擎初始化成功！\n")
@@ -181,7 +182,7 @@ class OCREngine:
                     w = int(np.max(points[:, 0]) - x)
                     h = int(np.max(points[:, 1]) - y)
 
-                    confidence = rec_scores[idx] if idx < len(rec_scores) else 1.0
+                    confidence = rec_scores[idx] if idx < len(rec_scores) else 0.0
 
                     text_boxes.append({
                         'bbox': poly,

@@ -1,0 +1,15 @@
+[project]
+name = "reglyph-pdf"
+version = "1.2.0"
+description = "Local-first desktop text editing for scanned PDFs and images"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+
+[project.urls]
+Repository = "https://github.com/15016623369a-spe/reglyph-pdf"
+Issues = "https://github.com/15016623369a-spe/reglyph-pdf/issues"
+Documentation = "https://github.com/15016623369a-spe/reglyph-pdf/tree/main/docs"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

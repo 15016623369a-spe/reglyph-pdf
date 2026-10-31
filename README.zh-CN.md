@@ -1,192 +1,111 @@
-[English](README.md) | 中文
+<p align="center"><img src="docs/assets/reglyph-mark.svg" width="72" alt="ReGlyph PDF"></p>
+<h1 align="center">ReGlyph PDF</h1>
+<p align="center"><strong>让图片 PDF 中的文字重新可编辑。</strong><br>识别文字、局部修复底图，并保留其他原版内容。</p>
+<p align="center"><a href="README.md">English</a> · <a href="#快速开始">快速开始</a> · <a href="docs/user-guide.zh-CN.md">使用指南</a> · <a href="docs/architecture.md">技术架构</a></p>
 
-# OCRPDF-TO-PPT（PowerOCR Presentation）
+ReGlyph PDF 是一款以本地处理为默认方式的桌面文字编辑工具，适用于扫描 PDF、扁平化宣传册和图片中的文字修改。它将 OCR 识别、限定区域的底图修复和可编辑文字图层整合到同一个工作台，支持保存工程，并导出 PDF 与 PowerPoint。
 
-一个轻量级桌面工具：把图片 / PDF 页面通过 OCR 识别，转换成 **可编辑的 PowerPoint（.pptx）**。
+工作流围绕明确的修改范围展开：先预览计划，再选择项目；只处理选定区域，校验后提交。原始页面与修复后的底图共同保存在工程中，便于对照、撤销和继续修改。
 
-核心思路：
-- 每一页 PPT 以原图（或“去字后的纯背景图”）作为底图。
-- OCR 识别出的文本区域会变成 **可编辑的 PPT 文本框**，并按位置叠加在底图上。
+![使用合成宣传页展示的 ReGlyph PDF 编辑工作台](docs/assets/workspace.png)
 
-## 功能特性
+## 核心能力
 
-- 导入：图片（PNG/JPG/...）与 PDF（逐页渲染成图片）
-- OCR：兼容 PaddleOCR 2.x / 3.x（自动识别版本），CPU/GPU（GPU 不可用会自动回退 CPU）
-- 多页工作流：缩略图列表、新建/复制/排序页面、撤销/重做
-- 画布编辑：移动/缩放文本框、编辑文字、复制/剪切/粘贴、格式刷
-- 选区（ROI）：只对选定区域执行 OCR / 去字（更快、更精准）
-- 文本框背景：全局/单框背景色与透明度、吸管取色
-- 导出 PPTX + 一键预览（F5）
-- 可选：调用 **IOPaint** API 做“去字”，避免导出后出现“底图文字 + 文本框文字”重影
+- **图片文字编辑**：通过 PaddleOCR 识别文字和坐标，清除底图旧字，再放入可编辑的文字框。
+- **精确批量替换**：逐项预览页码、原文字和新文字，可单独勾选处理项；严格模式将混合正文或识别不确定的内容交由人工核对。
+- **限定区域修复**：简单背景优先快速清除，复杂纹理使用 LaMa 修复；修复结果只能写入明确的二值遮罩区域。
+- **可恢复的工程**：将原图、修复底图、文字样式打包为 `.ipdfedit`，支持撤销、重做和自动备份。
+- **文字排版**：调整位置、字体、字号、颜色、对齐和旋转；合并多行段落，按标题、正文和页脚统一字号。
+- **多种输出**：导出带文字图层的 PDF，以及文字框可继续修改的 PowerPoint。
+- **本地批处理优化**：局部裁剪、相邻区域合并、内容缓存与可调 CPU 线程预算，减少重复计算。
 
-## 环境要求
+## 业务场景
 
-- Python 3.8+（建议 64 位）
-- 系统：Windows 体验最佳；macOS/Linux 取决于 PaddlePaddle 是否提供对应 wheel
+| 场景 | 典型任务 | 输出 |
+| --- | --- | --- |
+| 品牌视觉更新 | 批量替换宣传物料中的品牌名称、页脚和图片字标 | 更新后的宣传册及可继续编辑的工程 |
+| 市场与销售资料复用 | 调整产品介绍、客户演示、活动资料中的指定内容 | PDF 与可编辑 PowerPoint |
+| 产品目录维护 | 修正产品型号、参数、说明、联系方式等局部文字 | 保留其他图像内容的新版目录 |
+| 文档本地化 | 替换已审核的翻译文案并调整排版 | 本地化宣传页和演示文稿 |
+| 图片模板恢复 | 将扫描件或扁平化页面中的文字重建为编辑对象 | 包含原始页面与文字图层的模板工程 |
 
-关于 PaddlePaddle：
-- 不同系统 / Python 版本对 PaddlePaddle wheel 支持不同。
-- 若需要 GPU，请按官方安装指引选择正确的 GPU 版本（CUDA/驱动匹配）。
+## 快速开始
 
-## 安装（从源码运行）
-
-1）克隆仓库
+运行环境为 **Python 3.11**，支持 macOS 与 Windows x64。M1、M2 级别的 Apple Silicon 设备及更新配置属于预期运行范围；工具按通用桌面工作流设计，实际资源需求取决于分辨率、批量页数和修复区域大小。
 
 ```bash
-git clone https://github.com/Tansuo2021/OCRPDF-TO-PPT.git
-cd OCRPDF-TO-PPT
+git clone https://github.com/15016623369a-spe/reglyph-pdf.git
+cd reglyph-pdf
 ```
 
-2）创建并激活虚拟环境
+macOS：
 
-Windows（PowerShell）：
+```bash
+python3.11 bootstrap.py
+./launch.command
+```
+
+Windows：
+
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.11 bootstrap.py
+.\launch.bat
 ```
 
-macOS / Linux：
+安装程序分别建立编辑识别环境和图像修复环境，避免依赖冲突。首次使用会下载模型，此后复用本地模型。启动入口会打开编辑器及本机修复服务，关闭工具后，只结束本次启动的服务。
+
+详细配置见 [安装与运行说明](docs/installation.md)。
+
+## 标准工作流
+
+1. **导入文件**：导入 PDF 或图片，先保存工程副本。
+2. **识别文字**：识别本页或全部页面，获得文字与定位信息。
+3. **预览修改**：输入查找与替换内容，保持严格模式，核对处理范围与匹配项目。
+4. **执行选定项**：仅清除被允许位置的旧文字，并更新对应文字框。
+5. **检查与排版**：放大检查照片招牌和残留区域，局部补擦，必要时统一字号和调整位置。
+6. **保存与导出**：保存 `.ipdfedit` 工程，按用途导出 PDF 或 PowerPoint。
+
+例如 `ACME → NOVA`：独立定位、识别清晰的文字框可进入自动替换；品牌混在整行正文中且缺少精确单词坐标时，会保留原样并列为待核对。工具不会按字符数量猜测擦除位置。导出的可编辑范围对应实际重建的文字图层，其余原版内容继续保留为底图。
+
+## 修改完整性
+
+- 修改计划绑定文档指纹、文字框和允许区域；文档变化后需重新预览。
+- 清除后的底图在允许区域之外必须保持像素一致。
+- 严格替换提交前检查文字内容和排版变化是否符合计划。
+- 替换批次失败或取消时，恢复这批操作之前的文字、底图及撤销历史。
+- 每次严格替换保存 JSON 操作记录，包含计划、已处理数量、待核对项和校验结果。
+
+## 技术栈
+
+| 层级 | 技术 | 用途 |
+| --- | --- | --- |
+| 桌面交互 | Python 3.11、PySide6 / Qt、QtAwesome | 页面导航、编辑画布、属性面板和交互流程 |
+| 文字识别 | PaddleOCR、PaddlePaddle | 文字检测、识别、坐标与置信度 |
+| 图像处理 | OpenCV、NumPy、Pillow | 遮罩、背景分析、快速清除与像素比较 |
+| 图像修复 | IOPaint、LaMa、PyTorch | 本地背景修复 |
+| 文档输出 | PyMuPDF、Qt PDF、python-pptx | PDF 导入、文字图层 PDF 与 PPTX 导出 |
+| 工程与记录 | JSON、ZIP、SHA-256 | 原始资产、工程打包、文档指纹和修复缓存 |
+| 测试与自动检查 | unittest、Qt 集成测试、GitHub Actions | 范围校验、事务恢复和桌面环境检查 |
+
+## 资源配置
+
+默认使用 **2 个 CPU 线程**。可通过 `IPDF_CPU_THREADS` 设置 `1`–`4` 的预算，按设备能力与任务规模调整。更高配置使用相同的功能和工程格式，无需针对特定处理器另建版本。
+
+修复服务默认监听 `127.0.0.1:18181`；本地处理无需 API Key。设置、缓存、操作记录及自动备份存放于系统用户数据目录。更多参数见 [技术架构](docs/architecture.md)。
+
+## 测试与参与开发
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python tests/test_contract.py
+python tests/test_platform.py
+python tests/test_desktop.py
+python tests/test_project_export.py
 ```
 
-3）安装依赖
+测试使用运行时生成的合成样本，覆盖精确匹配、勾选范围、区域外像素保留、文档变化检测、失败与取消回退、撤销重做、工程保存和导出。开发说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-```bash
-pip install -U pip
-pip install -r requirements.txt
-pip install qtawesome
-```
+## 来源与署名
 
-如果安装 `paddlepaddle` 失败，建议先按官方文档安装 PaddlePaddle，再安装其它依赖：
-- PaddlePaddle 安装指引：https://www.paddlepaddle.org.cn/install/quick
+ReGlyph PDF 基于 [Tansuo2021/OCRPDF-TO-PPT](https://github.com/Tansuo2021/OCRPDF-TO-PPT) 持续开发，扩展了编辑工作流、便携工程、局部修复、范围校验和导出处理，保留原作者来源。详细信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-## 运行
-
-```bash
-python main.py
-```
-
-提示：首次执行 OCR 时 PaddleOCR/PaddleX 可能会下载模型，默认缓存到 `model/official_models/`（可在软件内修改缓存目录）。
-
-## 使用说明（详细步骤）
-
-### 1）导入图片 / PDF
-
-- 导入图片：点击 `导入图片`（快捷键 `Ctrl+O`）
-- 导入 PDF：点击 `导入PDF`（快捷键 `Ctrl+Shift+O`）
-  - 程序会把 PDF 每一页渲染成图片并加入左侧缩略图列表。
-
-### 2）（可选）框选选区 ROI（只对选区做 OCR / 去字）
-
-- 点击 `框选选区`（快捷键 `Ctrl+Alt+A`）
-- 在画布上拖拽框选一个矩形区域
-- 点击 `清除选区`（快捷键 `Ctrl+Alt+Shift+A`）恢复全图
-
-### 3）执行 OCR
-
-- OCR 本页：`OCR本页`（快捷键 `Ctrl+Enter`）
-- OCR 全部：`OCR全部`（快捷键 `Ctrl+R`）
-
-OCR 后你可以直接在画布上修正：
-- 拖拽移动文本框；拖拽控制点缩放
-- 双击文本框编辑文字
-- `Delete` 删除选中文本框
-- `Ctrl+C / Ctrl+X / Ctrl+V` 复制/剪切/粘贴文本框
-- `格式刷`：把当前选中文本框的样式复制，下一次点击其它文本框会应用（一次性）
-
-### 4）（推荐）用 IOPaint 去字：避免“文字重影”
-
-为什么要去字：很多扫描图/截图本身就带文字，导出后底图文字仍在，叠加 OCR 文本框可能出现“双层字/重影”。
-
-1）启动 IOPaint 服务（示例）：
-```bash
-iopaint start --host 127.0.0.1 --port 8080
-```
-
-2）在软件中设置：`设置` 标签 → `IOPaint 设置`
-- 勾选启用
-- 填写 API 地址（默认）：`http://127.0.0.1:8080/api/v1/inpaint`
-- 需要时可调“文本框外扩（遮罩）/裁剪外扩（API 加速）”
-
-3）执行去字：
-- 去字本页：`去字本页`（`Ctrl+I`）
-- 去字全部：`去字全部`（`Ctrl+Shift+I`）
-
-常用对比/恢复：
-- `去字预览`：切换显示原图/去字底图（`Ctrl+Alt+B`）
-- `恢复原图`：清除本页去字底图（`Ctrl+Alt+Shift+B`）
-
-### 5）导出 / 预览 PPT
-
-- 导出：`导出PPT`（`Ctrl+S`）
-- 预览：`预览PPT`（`F5`）
-
-导出规则：
-- 如果某一页存在“去字底图”，导出会优先使用去字底图作为背景。
-- 导出的文本框在 PowerPoint 中可继续编辑。
-
-### 6）导出显示效果（视图标签）
-
-在 `视图` 标签 → `PPT导出设置`：
-- 开/关“文本框背景色”
-- 设置全局背景色与透明度
-- 吸管从当前图片取色
-- 单框背景：选中文本框后，可在右侧属性面板中设置“单独背景色/透明度”
-
-## 快捷键
-
-在软件内按 `F1` 可以打开快捷键速查表。
-
-## 配置说明
-
-程序运行时会在 `settings.json` 里保存配置（由软件自动读写）。
-
-### OCR 模型缓存目录
-
-`设置` 标签 → `OCR 设置`：
-- `模型缓存目录（PADDLE_PDX_CACHE_HOME）`：PaddleOCR/PaddleX 模型下载目录（其下会生成 `official_models/`）
-- 可选：手动指定 det/rec 模型目录（存在才会使用）
-- 可选：启用 GPU（GPU 不可用会自动回退 CPU）
-
-## 常见问题（Troubleshooting）
-
-- 缺少 qtawesome：运行 `pip install qtawesome`
-- OCR 初始化失败 / 下载模型失败：
-  - 首次运行需要下载模型，确认网络可用
-  - 在 `OCR 设置` 中把模型缓存目录改为可写目录
-  - 若启用 GPU：确认安装了匹配的 PaddlePaddle GPU wheel + CUDA 运行环境
-- PDF 导入失败：
-  - 确认已安装 PyMuPDF（`pip install pymupdf`）
-- IOPaint 去字失败：
-  - 确认 IOPaint 服务已启动
-  - 检查 `IOPaint 设置` 中 API 地址（默认：`http://127.0.0.1:8080/api/v1/inpaint`）
-
-## 项目结构
-
-- `main.py`：GUI + 工作流（导入/OCR/编辑/导出）
-- `ocr_engine.py`：PaddleOCR 封装（兼容 2.x/3.x）
-- `ppt_export.py`：生成可编辑的 PPTX（文本框位置/字体/背景/透明度等）
-
-## 致谢
-
-- PaddleOCR / PaddlePaddle
-- PySide6（Qt）
-- python-pptx
-- PyMuPDF（PDF 导入）
-- IOPaint（可选去字后端）
-- QtAwesome（图标）
-
-## 订阅 / 点星星
-
-如果这个项目对你有帮助，欢迎在 GitHub 上点个 Star / Watch。
-
-[![GitHub stars](https://img.shields.io/github/stars/Tansuo2021/OCRPDF-TO-PPT?style=social)](https://github.com/Tansuo2021/OCRPDF-TO-PPT/stargazers)
-[![GitHub watchers](https://img.shields.io/github/watchers/Tansuo2021/OCRPDF-TO-PPT?style=social)](https://github.com/Tansuo2021/OCRPDF-TO-PPT/watchers)
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Tansuo2021/OCRPDF-TO-PPT&type=Date)](https://star-history.com/#Tansuo2021/OCRPDF-TO-PPT&Date)
-
-图片/徽章提供方：
-- https://shields.io/（徽章）
-- https://star-history.com/（Star 历史趋势图）
+仓库中的示例和截图全部使用合成内容。

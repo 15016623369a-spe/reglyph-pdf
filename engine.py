@@ -1,4 +1,5 @@
 import sys
+from platform_config import data_dir,cache_dir,model_dir
 import os
 import tempfile
 import copy
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer, QPointF, QPoint, QUrl, QLocale
 from PySide6.QtGui import (
-    QPixmap, QPen, QColor, QFont, QFontMetricsF, QTextOption, QImage, QIcon, QBrush, QAction, QKeySequence, QDesktopServices
+    QPixmap, QPen, QColor, QFont, QFontMetricsF, QTextOption, QImage, QIcon, QBrush, QAction, QKeySequence, QDesktopServices, QTextCursor, QTextBlockFormat
 )
 import cv2
 import numpy as np
@@ -1187,6 +1188,7 @@ class InpaintThread(QThread):
     finished_one = Signal(str, str)  # (src_path, out_path)
     error = Signal(str)
     all_done = Signal(bool)          # (canceled)
+    detail = Signal(str)
 
     STRATEGY_LOCAL_FILL = "local_fill"
     STRATEGY_LOCAL_CV2 = "local_cv2"
@@ -1194,6 +1196,7 @@ class InpaintThread(QThread):
     MODE_AUTO = "auto"
     MODE_FILL = "fill"
     MODE_REMOTE = "remote"
+    MODE_LOCAL = "smooth"
     RUN_SMART = "smart"
     RUN_FILL = "fill"
     RUN_REMOTE = "remote"
@@ -1235,10 +1238,14 @@ class InpaintThread(QThread):
         self.remote_pad_x = max(0, int(remote_pad_x or 0))
         self.remote_pad_y = max(0, int(remote_pad_y or 0))
         self.results = []  # list[(src, out)]
+        self.batch_stats = []
+        self.cache_hits = 0
+        self.api_requests = 0
 
     @classmethod
     def _normalize_box_clean_mode(cls, value):
         mode = str(value or "").strip().lower()
+        if mode in {"smooth", "local"}:return cls.MODE_LOCAL
         if mode in {"fill", "solid", "solid_fill", "color_fill"}:
             return cls.MODE_FILL
         if mode in {"remote", "iopaint", "api"}:
@@ -1529,6 +1536,13 @@ class InpaintThread(QThread):
                 "color_std": 999.0,
                 "plane_residual": 999.0,
             }
+
+        from batch_clean import flat_background
+        flat_color = flat_background(crop_img, crop_mask)
+        if flat_color is not None:
+            return {"strategy": cls.STRATEGY_LOCAL_FILL, "flat_color": flat_color,
+                    "edge_density": 0.0, "texture": 0.0, "color_std": 0.0,
+                    "color_range": 0.0, "plane_residual": 0.0}
 
         gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         edges = cv2.Canny(gray, 50, 150) > 0
@@ -1823,7 +1837,9 @@ class InpaintThread(QThread):
         if sample_mask_src is None:
             sample_mask_src = mask_u8
         sample_mask = cls._fill_sample_ring(sample_mask_src) if hard_mask else cls._analysis_ring(mask_u8)
-        fill_color = cls._estimate_fill_color(img_rgb, sample_mask)
+        fill_color = (analysis or {}).get("flat_color")
+        if fill_color is None:
+            fill_color = cls._estimate_fill_color(img_rgb, sample_mask)
         if fill_color is None:
             fallback_mask = ~(mask_u8 > 0)
             fill_color = cls._estimate_fill_color(img_rgb, fallback_mask)
@@ -1846,6 +1862,20 @@ class InpaintThread(QThread):
     def _run_local_cv2(cls, crop_img, crop_mask, analysis):
         from PIL import Image
 
+        if (analysis or {}).get('smooth_fill'):
+            # Explicit smooth-wall mode only. Reconstruct the slow vertical lighting
+            # gradient from clean strips above and below, without sampling nearby signs.
+            arr=np.asarray(crop_img,dtype=np.uint8).copy()
+            mask=np.asarray(crop_mask)>0
+            ys,xs=np.nonzero(mask)
+            x0,x1,y0,y1=xs.min(),xs.max()+1,ys.min(),ys.max()+1
+            if y0>=4 and y1+4<=arr.shape[0]:
+                top=np.median(arr[y0-4:y0,x0:x1],axis=0)
+                bottom=np.median(arr[y1:y1+4,x0:x1],axis=0)
+                weights=(np.arange(y1-y0,dtype=float)+1)/(y1-y0+1)
+                patch=(top[None,:,:]*(1-weights[:,None,None])+bottom[None,:,:]*weights[:,None,None]).round().clip(0,255).astype('uint8')
+                region=arr[y0:y1,x0:x1];active=mask[y0:y1,x0:x1];region[active]=patch[active]
+                return Image.fromarray(arr,mode='RGB')
         img_bgr = cv2.cvtColor(np.asarray(crop_img, dtype=np.uint8), cv2.COLOR_RGB2BGR)
         mask_u8 = (np.asarray(crop_mask, dtype=np.uint8) > 0).astype(np.uint8) * 255
 
@@ -1872,12 +1902,26 @@ class InpaintThread(QThread):
 
         import requests
         from PIL import Image
+        from batch_clean import cache_key, load_cached, save_cached
 
         payload_crop = self._crop_from_mask(image_pil, mask_pil, crop_padding=crop_padding)
         if not payload_crop:
             return None
 
         crop_box, crop_img, crop_mask = payload_crop
+        # Content-addressed cache: position, file name and OCR labels are irrelevant.
+        # Changing the image, mask or service endpoint always invalidates the result.
+        from pathlib import Path
+        from platform_config import cache_dir as get_cache_dir
+        cache_dir = get_cache_dir() / 'repair-cache'
+        key = cache_key(url, crop_img, crop_mask)
+        cached = load_cached(cache_dir, key, crop_img.size)
+        if cached is not None:
+            self.cache_hits += 1
+            return crop_box, cached, crop_mask
+        if self.isInterruptionRequested():
+            raise InterruptedError('已取消去字')
+        self.api_requests += 1
         buf_img = BytesIO()
         crop_img.save(buf_img, "PNG")
         buf_mask = BytesIO()
@@ -1908,6 +1952,10 @@ class InpaintThread(QThread):
                     f"IOPaint returned an unexpected image size: {getattr(res_crop, 'size', None)} != {getattr(crop_img, 'size', None)}",
                 )
             )
+        try:
+            save_cached(cache_dir, key, res_crop)
+        except OSError:
+            logger.warning("Repair cache unavailable; document processing continues.")
         return (crop_box, res_crop, crop_mask)
 
     @staticmethod
@@ -1925,7 +1973,7 @@ class InpaintThread(QThread):
                 pass
         options = options or {}
         try:
-            blur_radius = float(options.get("blur_radius", 3.0))
+            blur_radius = float(options.get("blur_radius", 0.0))
             if blur_radius <= 0:
                 blur_mask = crop_mask
             else:
@@ -1933,7 +1981,8 @@ class InpaintThread(QThread):
         except Exception:
             blur_mask = crop_mask
         orig_crop_area = final_img.crop(crop_box)
-        blended = Image.composite(res_crop, orig_crop_area, blur_mask)
+        from exact_edit import composite_patch
+        blended = Image.fromarray(composite_patch(np.asarray(orig_crop_area.convert("RGB")), np.asarray(res_crop.convert("RGB")), np.asarray(blur_mask)),mode="RGB")
         final_img.paste(blended, (int(crop_box[0]), int(crop_box[1])))
 
     def _normalize_roi(self, roi, img_size):
@@ -1956,6 +2005,7 @@ class InpaintThread(QThread):
     def _build_tasks(self, src, img, boxes_raw, roi):
         buckets = {
             self.MODE_AUTO: [],
+            self.MODE_LOCAL: [],
             self.MODE_FILL: [],
             self.MODE_REMOTE: [],
         }
@@ -2088,6 +2138,9 @@ class InpaintThread(QThread):
                             analysis["sample_mask"] = sample_mask_pil.crop(crop_box)
                         except Exception:
                             pass
+                elif requested_mode == self.MODE_LOCAL:
+                    analysis["strategy"] = self.STRATEGY_LOCAL_CV2
+                    analysis["smooth_fill"] = True
                 elif requested_mode == self.MODE_REMOTE:
                     analysis["strategy"] = self.STRATEGY_REMOTE
                     analysis["mask_shape"] = "rect"
@@ -2106,6 +2159,27 @@ class InpaintThread(QThread):
                     float(analysis.get("plane_residual", 0.0)),
                     int(analysis.get("line_overlays", 0)),
                 )
+                if len(cluster) == 1 and cluster[0].get('clean_tight'):
+                    tight = cluster[0].get('clean_rect') or self._extract_rect(cluster[0])
+                    tight_box = dict(rect=tight)
+                    mask_pil = self._create_mask(img.size, [tight_box], padding=0, prefer_rect=True)
+                    if cluster[0].get('clean_polygon'):
+                        mask_pil = self._create_mask(img.size, [dict(rect=tight, bbox=cluster[0]['clean_polygon'])], padding=0)
+                    if roi is not None:mask_pil = self._limit_mask_to_roi(mask_pil, roi, img.size)
+                    payload = self._crop_from_mask(img, mask_pil, max(0, self.crop_padding))
+                    if not payload:continue
+                    crop_box, crop_img, crop_mask = payload
+                    analysis = self._analyze_crop(crop_img, crop_mask)
+                    if requested_mode == self.MODE_REMOTE:analysis['strategy'] = self.STRATEGY_REMOTE
+                    elif requested_mode == self.MODE_LOCAL:
+                        analysis['strategy'] = self.STRATEGY_LOCAL_CV2
+                        analysis['smooth_fill'] = True
+                    elif requested_mode == self.MODE_FILL:
+                        analysis['strategy'] = self.STRATEGY_LOCAL_FILL
+                        if cluster[0].get('clean_fill_color') is not None:analysis['flat_color'] = tuple(cluster[0]['clean_fill_color'])
+                    analysis['requested_mode'] = requested_mode
+                    analysis['hard_mask'] = True
+                    overlays = []
                 tasks.append(
                     {
                         "index": next_idx,
@@ -2114,11 +2188,18 @@ class InpaintThread(QThread):
                         "analysis": analysis,
                         "overlays": overlays,
                         "remote_required": bool(requested_mode == self.MODE_REMOTE or analysis.get("strategy") == self.STRATEGY_REMOTE),
-                        "composite_blur": 0.0 if requested_mode == self.MODE_FILL or analysis.get("strategy") == self.STRATEGY_REMOTE else 3.0,
+                        "composite_blur": 0.0,
                     }
                 )
                 next_idx += 1
         if tasks:
+            from batch_clean import merge_remote_tasks
+            remote = [t for t in tasks if t['analysis']['strategy'] == self.STRATEGY_REMOTE]
+            local = [t for t in tasks if t['analysis']['strategy'] != self.STRATEGY_REMOTE]
+            batched = merge_remote_tasks(remote, img.size, max(0, self.crop_padding))
+            self.batch_stats.append(dict(source=str(src), boxes=sum(len(t['boxes']) for t in tasks),
+                                         local_tasks=len(local), remote_before=len(remote), remote_after=len(batched)))
+            tasks = sorted(local + batched, key=lambda t: t['index'])
             counts = {
                 self.STRATEGY_LOCAL_FILL: 0,
                 self.STRATEGY_LOCAL_CV2: 0,
@@ -2192,6 +2273,15 @@ class InpaintThread(QThread):
                 return task["index"], (crop_box, local_img, crop_mask, task.get("overlays") or [], {"blur_radius": float(task.get("composite_blur", 3.0) or 0.0)})
             raise last_err or RuntimeError(_t_global("IOPaint 请求失败", "IOPaint request failed"))
 
+        if len(api_urls) == 1:
+            out = []
+            for i, task in enumerate(remote_tasks):
+                if self.isInterruptionRequested():return None
+                self.detail.emit(f'正在修复复杂背景 {i+1}/{len(remote_tasks)}（相邻文字已合并）')
+                result = worker(task)
+                out.append(result)
+            return out
+
         if len(remote_tasks) == 1:
             return [worker(remote_tasks[0])]
 
@@ -2254,6 +2344,9 @@ class InpaintThread(QThread):
                 local_results = []
                 remote_tasks = []
                 for task in tasks:
+                    if self.isInterruptionRequested():
+                        canceled = True
+                        break
                     strategy = str((task.get("analysis") or {}).get("strategy") or self.STRATEGY_REMOTE)
                     if strategy == self.STRATEGY_REMOTE:
                         remote_tasks.append(task)
@@ -2268,6 +2361,8 @@ class InpaintThread(QThread):
                         continue
                     local_results.append((task["index"], (crop_box, local_img, crop_mask, task.get("overlays") or [], {"blur_radius": float(task.get("composite_blur", 3.0) or 0.0)})))
 
+                if canceled:break
+                self.detail.emit(f"本页快速清除 {len(local_results)} 组，AI 修复 {len(remote_tasks)} 组")
                 remote_results = self._run_remote_tasks(img, remote_tasks, list(self.api_urls or []))
                 if remote_results is None:
                     canceled = True
@@ -2281,6 +2376,9 @@ class InpaintThread(QThread):
                 self.results.append((src, out_path))
                 self.finished_one.emit(src, out_path)
                 self.progress.emit(done, total)
+            except InterruptedError:
+                canceled = True
+                break
             except Exception as e:
                 self.error.emit(str(e))
                 break
@@ -2589,6 +2687,7 @@ class CustomGraphicsView(QGraphicsView):
 class CanvasTextBox(QGraphicsItemGroup):
     def __init__(self, rect, text, index, parent_win):
         super().__init__()
+        self._initializing=True
         self.parent_win = parent_win
         # 绑定 box_data 里的 dict：用于把 UI 改动同步到预览/导出
         self.model = rect if isinstance(rect, dict) and "rect" in rect else None
@@ -2660,8 +2759,7 @@ class CanvasTextBox(QGraphicsItemGroup):
 
         # 最后更新背景色
         self.apply_style_from_model()
-        self._sync_model_geometry()
-        self._sync_model_bg()
+        self._initializing=False
 
     def _hit_test_handle(self, pos):
         """返回点击位置命中的缩放手柄（tl/tr/bl/br）或 None"""
@@ -2722,7 +2820,7 @@ class CanvasTextBox(QGraphicsItemGroup):
             pass
 
     def itemChange(self, change, value):
-        if change == QGraphicsItem.ItemPositionHasChanged:
+        if change == QGraphicsItem.ItemPositionHasChanged and not getattr(self,"_initializing",False):
             self._sync_model_geometry()
         return super().itemChange(change, value)
 
@@ -2774,19 +2872,18 @@ class CanvasTextBox(QGraphicsItemGroup):
         text_for_measure = str(self.model.get("text") or "")
         fs = self.model.get("font_size")
         try:
-            fs = int(fs) if fs is not None else None
+            fs = float(fs) if fs is not None else None
         except Exception:
             fs = None
 
         # Backward compatibility: older builds capped auto-fit at 200pt which makes big titles too small.
         # If the stored value looks like it hit that cap, re-fit with the higher limit.
-        if fs is not None and 200 <= fs <= 205:
+        if fs is not None and 200 <= fs <= 205 and not self.model.get("fixed_font"):
             try:
                 r = self.box.rect()
                 h_pt_est = float(r.height()) * 72.0 / 96.0
                 if h_pt_est > (float(fs) + 30.0):
                     fs = None
-                    self.model["font_size"] = None
             except Exception:
                 pass
         if fs is None:
@@ -2794,11 +2891,9 @@ class CanvasTextBox(QGraphicsItemGroup):
             try:
                 r = self.box.rect()
                 fs = int(self.parent_win.fit_font_size_pt_like_ppt(text_for_measure, r.width(), r.height()))
-                self.model["font_size"] = int(fs)
             except Exception:
                 r = self.box.rect()
                 fs = int(round(_auto_font_pt(text_for_measure, r.width(), r.height(), str(family), bool(self.model.get("bold", False)))))
-                self.model["font_size"] = int(fs)
 
         # PPT uses points (pt) at 96 DPI mapping; for the canvas we set a pixel size derived from pt so it
         # scales with the scene and stays consistent across screens.
@@ -2807,6 +2902,11 @@ class CanvasTextBox(QGraphicsItemGroup):
         font.setPixelSize(px)
         font.setBold(bool(self.model.get("bold", False)))
         self.txt.setFont(font)
+        self.txt.setPos(float(self.model.get('text_offset_x',0)), float(self.model.get('text_offset_y',0)))
+        from PySide6.QtGui import QTransform
+        sx=float(self.model.get('text_scale_x',1));sy=float(self.model.get('text_shear_y',0))
+        self.txt.setTransform(QTransform(sx,sy*sx,0,1,0,0))
+        self.txt.setTextWidth(self.box.rect().width()/max(.01,sx))
 
         # 文字颜色
         tc = self.model.get("text_color", [0, 0, 0])
@@ -2829,10 +2929,19 @@ class CanvasTextBox(QGraphicsItemGroup):
             else:
                 opt.setAlignment(Qt.AlignLeft)
             # Match PPT export (no auto-wrap); explicit '\n' still works.
-            opt.setWrapMode(QTextOption.NoWrap)
+            opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere if self.model.get("word_wrap") else QTextOption.NoWrap)
             self.txt.document().setDefaultTextOption(opt)
         except Exception:
             pass
+
+        if self.model.get("line_spacing"):
+            cursor = QTextCursor(self.txt.document())
+            cursor.select(QTextCursor.Document)
+            block = QTextBlockFormat()
+            block.setLineHeight(float(self.model["line_spacing"]) * px, QTextBlockFormat.FixedHeight.value)
+            cursor.mergeBlockFormat(block)
+        self.setTransformOriginPoint(self.box.rect().center())
+        self.setRotation(float(self.model.get("rotation", 0)))
 
         # 边框：不提供自定义边框设置，仅保留编辑时虚线轮廓
         self.refresh_clean_outline()
@@ -2979,11 +3088,12 @@ class PPTCloneApp(QMainWindow):
     def __init__(self):
         super().__init__()
         # Set a safe default title first; final title is set after UI language is resolved.
-        self.setWindowTitle("PowerOCR Presentation")
+        self.setWindowTitle("图片pdf文字编辑器")
         self.resize(1200, 760)
         self.setStyleSheet(GLOBAL_STYLE)
 
-        self.settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+        data_dir().mkdir(parents=True,exist_ok=True)
+        self.settings_path = str(data_dir()/"settings.json")
         self.settings = self.load_settings()
         # UI language (affects visible labels/buttons; stored in settings.json).
         self.ui_lang_setting = str(self.settings.get("ui_lang") or "auto").strip()
@@ -2991,7 +3101,7 @@ class PPTCloneApp(QMainWindow):
         # Make language available to non-UI helpers/threads in this module.
         global _UI_LANG
         _UI_LANG = self.ui_lang
-        self.setWindowTitle(self._t("PowerOCR 演示", "PowerOCR Presentation"))
+        self.setWindowTitle("图片pdf文字编辑器")
 
         self.images = []
         self.box_data = {}
@@ -3013,7 +3123,7 @@ class PPTCloneApp(QMainWindow):
         try:
             import time as _time_mod
             run_id = f"run_{int(_time_mod.time() * 1000)}_{os.getpid()}"
-            root = os.path.join(os.path.dirname(__file__), "_runtime_cache")
+            root = str(cache_dir())
             self.run_cache_dir = os.path.join(root, run_id)
             os.makedirs(self.run_cache_dir, exist_ok=True)
         except Exception:
@@ -3219,7 +3329,7 @@ class PPTCloneApp(QMainWindow):
             "ocr_rec_dir": "",
             # IOPaint (inpaint) settings
             "inpaint_enabled": True,
-            "inpaint_api_url": "http://127.0.0.1:8080/api/v1/inpaint",
+            "inpaint_api_url": "http://127.0.0.1:18181/api/v1/inpaint",
             "inpaint_box_padding": 6,
             "inpaint_crop_padding": 128,
             "inpaint_fill_pad_x": 10,
@@ -3257,7 +3367,7 @@ class PPTCloneApp(QMainWindow):
         if not cache_dir:
             # 默认放到项目目录，方便拷贝到其他电脑
             proj_dir = os.path.dirname(__file__)
-            cache_dir = "model" if os.path.isdir(os.path.join(proj_dir, "model")) else ".paddlex"
+            cache_dir = str(model_dir())
 
         # 相对路径按项目目录解析，方便整体拷贝到其他电脑
         if not os.path.isabs(cache_dir):
@@ -3493,7 +3603,7 @@ class PPTCloneApp(QMainWindow):
         chk_enabled.setChecked(bool(self.settings.get("inpaint_enabled", True)))
         form.addRow(self._t("开关", "Enable"), chk_enabled)
 
-        ed_url = QLineEdit(str(self.settings.get("inpaint_api_url", "") or "http://127.0.0.1:8080/api/v1/inpaint"))
+        ed_url = QLineEdit(str(self.settings.get("inpaint_api_url", "") or "http://127.0.0.1:18181/api/v1/inpaint"))
         form.addRow(self._t("IOPaint API 地址", "IOPaint API URL"), ed_url)
 
         sp_box_pad = QSpinBox()
@@ -4224,7 +4334,15 @@ class PPTCloneApp(QMainWindow):
         btn_roi_clear.setToolTip(self._t("清除当前页选区 (Ctrl+Alt+Shift+A)", "Clear ROI (Ctrl+Alt+Shift+A)"))
         btn_roi_clear.clicked.connect(self.clear_roi_current)
 
+        self.btn_roi_erase = RibbonLargeBtn(self._t("擦除\n选区", "Erase\nRegion"), "fa5s.eraser", color=PPT_THEME_RED)
+        self.btn_roi_erase.setToolTip(self._t(
+            "框住漏字或残留后局部补擦，保留已处理的底图；无需 OCR 文本框。",
+            "Erase residual marks inside the selected region, keeping previous background edits. No OCR box required.",
+        ))
+        self.btn_roi_erase.clicked.connect(self.erase_selected_region)
+
         grp_roi.add_widget(self.btn_roi_select)
+        grp_roi.add_widget(self.btn_roi_erase)
         grp_roi.add_widget(btn_roi_clear)
         lay_home.addWidget(grp_roi)
 
@@ -5103,7 +5221,36 @@ class PPTCloneApp(QMainWindow):
     def remote_inpaint_all_slides(self, *args):
         self._start_clean_run(list(self.images), run_mode=InpaintThread.RUN_REMOTE)
 
-    def _run_inpaint(self, images_to_run, run_mode=InpaintThread.RUN_SMART):
+    def erase_selected_region(self, *args):
+        """Erase an arbitrary rectangle from the current cleaned background."""
+        roi = self._get_current_roi()
+        if not roi:
+            QMessageBox.information(
+                self, self._t("框选残留", "Select residual marks"),
+                self._t("请先点击“框选选区”，框住要擦除的残留，并留出少量边缘。",
+                        "Use Select ROI to surround the unwanted marks with a small margin first."),
+            )
+            return
+        if not self._ensure_inpaint_ready():
+            return
+        if not parse_inpaint_api_urls(self.settings.get("inpaint_api_url")):
+            QMessageBox.warning(
+                self, self._t("去字服务未配置", "Clean service not configured"),
+                self._t("请通过 start_macos.command 启动本地擦字服务，或在去字设置中配置服务地址。",
+                        "Start the local service with start_macos.command or configure a clean service URL."),
+            )
+            return
+        source = self.current_img
+        region_box = {"rect": list(roi), "text": "", "clean_enabled": True,
+                      "clean_mode": InpaintThread.MODE_REMOTE}
+        self._run_inpaint(
+            [source], run_mode=InpaintThread.RUN_REMOTE,
+            box_data_override={source: [region_box]},
+            input_image_by_src={source: self._get_export_image_path(source)},
+        )
+
+    def _run_inpaint(self, images_to_run, run_mode=InpaintThread.RUN_SMART,
+                     *, box_data_override=None, input_image_by_src=None):
         try:
             images_to_run = [p for p in images_to_run if p]
         except Exception:
@@ -5138,9 +5285,9 @@ class PPTCloneApp(QMainWindow):
         remote_pad_x = int(self.settings.get("inpaint_remote_pad_x", 8) or 0)
         remote_pad_y = int(self.settings.get("inpaint_remote_pad_y", 4) or 0)
 
-        # Always start from the original slide image. Re-running on an already-cleaned preview
-        # compounds artifacts and makes OCR masks drift from the true background.
-        input_image_by_src = {}
+        # Whole-page OCR cleaning starts from the original. Manual touch-ups explicitly
+        # use the latest clean background so other erased regions do not reappear.
+        input_image_by_src = dict(input_image_by_src or {})
 
         progress = QProgressDialog(mode_meta["progress"], self._t("取消", "Cancel"), 0, len(images_to_run), self)
         progress.setWindowTitle(mode_meta["title"])
@@ -5150,7 +5297,7 @@ class PPTCloneApp(QMainWindow):
 
         self.inpaint_thread = InpaintThread(
             images=images_to_run,
-            box_data=self.box_data,
+            box_data=self.box_data if box_data_override is None else box_data_override,
             out_dir=self.slide_assets_dir,
             api_url=api_urls,
             box_padding=box_pad,
@@ -5164,6 +5311,7 @@ class PPTCloneApp(QMainWindow):
             remote_pad_x=remote_pad_x,
             remote_pad_y=remote_pad_y,
         )
+        self.inpaint_thread.detail.connect(progress.setLabelText, Qt.QueuedConnection)
         progress.canceled.connect(self.inpaint_thread.requestInterruption)
         # 显式使用 QueuedConnection 确保跨线程信号在主线程中处理
         self.inpaint_thread.progress.connect(lambda cur, total: progress.setValue(cur), Qt.QueuedConnection)
@@ -5722,6 +5870,7 @@ class PPTCloneApp(QMainWindow):
         self._current_pixmap = pix
         self._build_scene_background(pix)
         for i, b in enumerate(self.box_data.get(self.current_img, [])):
+            if not b.get("render_enabled", True):continue
             try:
                 normalize_box_text_color_fields(b)
             except Exception:
@@ -6190,13 +6339,19 @@ class PPTCloneApp(QMainWindow):
                 it.apply_style_from_model()
         self.view.viewport().update()
     def sync_text_change(self):
-        if self.selected_box:
-            for c in self.selected_box.childItems():
-                if isinstance(c, QGraphicsTextItem):
-                    new_text = self.txt_edit.toPlainText()
-                    c.setPlainText(new_text)
-                    if isinstance(self.selected_box, CanvasTextBox) and isinstance(self.selected_box.model, dict):
-                        self.selected_box.model["text"] = new_text
+        if not self.selected_box:
+            return
+        new_text = self.txt_edit.toPlainText()
+        model = self.selected_box.model if isinstance(self.selected_box, CanvasTextBox) else None
+        if isinstance(model, dict) and str(model.get("text", "")) != new_text:
+            # Save the previous model before changing it so undo also restores typed text.
+            self.push_undo_current_slide()
+        for child in self.selected_box.childItems():
+            if isinstance(child, QGraphicsTextItem):
+                child.setPlainText(new_text)
+        if isinstance(model, dict):
+            model["text"] = new_text
+
     def delete_box(self, *args):
         """删除选中文本框（同时更新 box_data，保证预览/导出一致）"""
         if not (self.current_img and self.selected_box and isinstance(self.selected_box, CanvasTextBox)):

@@ -1,192 +1,141 @@
-English | [中文](README.zh-CN.md)
+<p align="center"><img src="docs/assets/reglyph-mark.svg" width="72" alt="ReGlyph PDF"></p>
+<h1 align="center">ReGlyph PDF</h1>
+<p align="center"><strong>Precision text editing for image PDFs.</strong><br>Recognize text, repair the background, and keep the rest of the page intact.</p>
+<p align="center"><a href="README.zh-CN.md">简体中文</a> · <a href="#quick-start">Quick start</a> · <a href="docs/user-guide.md">User guide</a> · <a href="docs/architecture.md">Architecture</a></p>
 
-# OCRPDF-TO-PPT (PowerOCR Presentation)
-<img width="4085" height="2070" alt="Clip_2026-01-27_21-17-54" src="https://github.com/user-attachments/assets/0dbba796-fd55-4128-8087-975e6bb1bfad" />
-A lightweight desktop tool that turns images / PDF pages into an **editable PowerPoint (.pptx)** with OCR text boxes.
+ReGlyph PDF is a local-first desktop application for editing text embedded in scanned PDFs, flattened brochures, and images. It combines OCR, region-scoped background repair, and editable text layers in a visual workspace, with exports to PDF and PowerPoint.
 
-Core idea:
-- Each slide uses the original image (or an inpainted "clean background" image) as the background.
-- OCR results are converted to **editable PowerPoint text boxes** positioned on top of the background.
+Its editing workflow is built around explicit scope: inspect a replacement plan, select the changes, repair only the approved regions, and verify the result before committing it. Original page assets remain available inside a portable project for comparison and continued editing.
 
-## Features
+![ReGlyph PDF desktop workspace with a synthetic product brochure](docs/assets/workspace.png)
 
-- Import: images (PNG/JPG/...) and PDFs (render each page to an image)
-- OCR: PaddleOCR 2.x / 3.x (auto-detect), CPU/GPU (auto fallback to CPU)
-- Batch workflow: thumbnails, add/duplicate/reorder slides, undo/redo
-- Edit boxes on canvas: move/resize, edit text, copy/cut/paste, format brush
-- ROI (Region of Interest): OCR / inpaint only within a selected rectangle
-- Text box background: global and per-box background color + alpha, eyedropper tool
-- Export PPTX + Preview (F5)
-- Optional: call **IOPaint** API to remove the original text on background before exporting (avoid "double text")
+## Why ReGlyph PDF
 
-## Requirements
+- **Edit image-backed text.** Detect text with PaddleOCR, clear the original lettering, and place editable text over the repaired background.
+- **Replace precisely.** Preview page-by-page matches, select individual changes, and preserve unrelated original content. Strict mode sends uncertain detections and mixed-text lines to review.
+- **Repair within a defined region.** Use fast solid-color reconstruction for simple areas and LaMa inpainting for textured backgrounds. Model output outside the binary edit mask is discarded.
+- **Keep edits recoverable.** Save original images, repaired backgrounds, and text properties in a self-contained `.ipdfedit` project. Undo, redo, and automatic recovery support iterative editing.
+- **Control typography.** Adjust position, font, point size, color, alignment, and rotation; merge text lines into paragraphs and apply consistent sizes by text role.
+- **Export for the next workflow.** Create a PDF with editable text layers or a PowerPoint presentation with native text boxes.
+- **Run locally.** OCR and the bundled repair service run on your computer. Content-addressed caching, bounded crop batching, and conservative CPU defaults reduce repeated computation.
 
-- Python 3.8+ (64-bit recommended)
-- OS: Windows is best-tested; macOS/Linux should also work if PaddlePaddle wheels are available
+## Business workflows
 
-Notes about PaddlePaddle:
-- PaddlePaddle wheels availability depends on your OS/Python version.
-- For GPU, install the correct PaddlePaddle GPU build according to the official guide.
+| Scenario | Typical task | Deliverable |
+| --- | --- | --- |
+| Brand refresh | Replace approved names, page footers, and image-backed wordmarks across existing collateral | Updated brochure PDF and an editable project |
+| Sales and marketing | Adapt a presentation or flattened product sheet for another audience | Editable PowerPoint and a distribution PDF |
+| Product catalog maintenance | Correct model numbers, specifications, captions, or contact information in selected regions | Revised catalog pages with preserved surrounding imagery |
+| Document localization | Replace selected passages with reviewed translated copy and adjust typography | Localized PDF or presentation |
+| Template recovery | Reconstruct editable text from scans and flattened artwork | A reusable project containing page assets and editable text boxes |
 
-## Install
+## Quick start
 
-1) Clone the repo
+**Runtime:** Python **3.11**, macOS or Windows x64. Apple Silicon machines, including M1/M2-class devices and newer configurations, are within the intended operating range. Resource needs depend on page resolution, batch size, and repair regions; see [installation and hardware guidance](docs/installation.md).
 
 ```bash
-git clone https://github.com/Tansuo2021/OCRPDF-TO-PPT.git
-cd OCRPDF-TO-PPT
+git clone https://github.com/15016623369a-spe/reglyph-pdf.git
+cd reglyph-pdf
 ```
 
-2) Create & activate a virtual environment
+### macOS
 
-Windows (PowerShell):
+```bash
+python3.11 bootstrap.py
+./launch.command
+```
+
+### Windows
+
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.11 bootstrap.py
+.\launch.bat
 ```
 
-macOS / Linux:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
+The installer creates separate editing/OCR and image-repair environments. Model weights are downloaded on first use and reused locally. The launch scripts start the editor and its loopback-only repair service; close the application to stop the service started by that launch.
+
+For an existing editing environment, use `python launcher.py`. Use `python launcher.py --check` to verify editor dependencies and the local repair service.
+
+## Editing workflow
+
+1. **Import** a PDF or images, then save a project copy.
+2. **Recognize** the current page or all pages. OCR provides text and location data.
+3. **Preview** find-and-replace operations. Keep strict mode enabled and review the page, original text, replacement, and processing status.
+4. **Apply** the selected operations. The tool repairs the permitted background regions and updates the corresponding text boxes.
+5. **Inspect** the result at an appropriate zoom. Use a local touch-up for remaining image-backed lettering, and adjust typography as needed.
+6. **Save and export** the portable project, PDF, or PowerPoint.
+
+For replacements such as `ACME → NOVA`, strict mode automatically processes clear, independently located text boxes. A brand word embedded in an OCR line is left for review when precise word coordinates are unavailable; it is not located by dividing the line into character-width estimates. Exported editability applies to the text layers you reconstruct, while untouched page content remains image-backed.
+
+### Change integrity
+
+- A preview binds the operation to a document fingerprint, selected text boxes, and permitted regions.
+- Stale plans are rejected after the document changes.
+- Repaired background pixels outside the permitted regions must remain identical.
+- Expected text and layout changes are checked before a strict replacement is committed.
+- A failed or canceled replacement batch restores the previous document and undo/redo history.
+- Each committed strict replacement writes a JSON operation record with the plan, applied count, review items, and validation result.
+
+See [the editing guide](docs/user-guide.md) for mixed-text lines, local touch-ups, typography, and project recovery.
+
+## Technology
+
+| Layer | Technology | Responsibility |
+| --- | --- | --- |
+| Desktop workspace | Python 3.11, PySide6 / Qt, QtAwesome | Canvas, text editing, page navigation, dialogs and export rendering |
+| OCR | PaddleOCR, PaddlePaddle | Text detection, recognition, bounding regions and confidence |
+| Image processing | OpenCV, NumPy, Pillow | Mask construction, background analysis, local repair and pixel comparison |
+| Background repair | IOPaint, LaMa, PyTorch | Local image inpainting behind a loopback HTTP service |
+| Document output | PyMuPDF, Qt PDF rendering, python-pptx | PDF import, layered PDF output and native PPTX text boxes |
+| Project persistence | JSON, ZIP, SHA-256 | Portable assets, document fingerprints, repair cache and operation records |
+| Quality checks | unittest, Qt integration tests, GitHub Actions | Contract validation, transaction recovery and desktop dependency checks |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[PDF or images] --> B[Page assets]
+    B --> C[OCR and layout data]
+    C --> D[Replacement plan]
+    D --> E[Review and selection]
+    E --> F[Scoped background repair]
+    F --> G[Editable text layers]
+    G --> H[Range and layout checks]
+    H --> I[Portable project]
+    H --> J[PDF / PowerPoint]
 ```
 
-3) Install dependencies
-
-```bash
-pip install -U pip
-pip install -r requirements.txt
-pip install qtawesome
-```
-
-If you hit `paddlepaddle` install errors, install PaddlePaddle first using the official instructions, then retry:
-- PaddlePaddle install guide: https://www.paddlepaddle.org.cn/install/quick
-
-## Run
-
-```bash
-python main.py
-```
-
-On the first OCR run, PaddleOCR/PaddleX may download models. By default the cache goes to `model/official_models/` (configurable in the app).
-
-## Usage (Step-by-step)
-
-### 1) Import images / PDFs
-
-- Images: click `导入图片` (or press `Ctrl+O`)
-- PDFs: click `导入PDF` (or press `Ctrl+Shift+O`)
-  - Each PDF page will be rendered into an image and added as a slide thumbnail.
-
-### 2) (Optional) Select ROI (only OCR/Inpaint within a region)
-
-- Click `框选选区` (or press `Ctrl+Alt+A`)
-- Drag on the canvas to select a rectangle
-- Click `清除选区` (or press `Ctrl+Alt+Shift+A`) to reset
-
-### 3) Run OCR
-
-- Current slide: `OCR本页` (`Ctrl+Enter`)
-- All slides: `OCR全部` (`Ctrl+R`)
-
-You can edit OCR results after recognition:
-- Drag to move boxes; drag handles to resize
-- Double-click a box to edit its text
-- `Delete` deletes the selected box
-- `Ctrl+C / Ctrl+X / Ctrl+V` copy/cut/paste boxes
-- `格式刷` copies style from one box and applies to the next clicked box
-
-### 4) (Recommended) Remove background text with IOPaint (avoid "double text")
-
-Why: scanned images already contain the original text; exporting OCR boxes on top can look like duplicated text.
-
-1) Start IOPaint service (example):
-```bash
-iopaint start --host 127.0.0.1 --port 8080
-```
-
-2) In the app: `设置` tab -> `IOPaint 设置`
-- Enable IOPaint
-- Set API URL (default): `http://127.0.0.1:8080/api/v1/inpaint`
-- Adjust paddings if needed
-
-3) Run inpaint:
-- Current slide: `去字本页` (`Ctrl+I`)
-- All slides: `去字全部` (`Ctrl+Shift+I`)
-
-Tips:
-- `去字预览` toggles original / inpainted background for comparison (`Ctrl+Alt+B`)
-- `恢复原图` removes the inpainted variant for the current slide (`Ctrl+Alt+Shift+B`)
-
-### 5) Export / Preview PPT
-
-- Export: `导出PPT` (`Ctrl+S`)
-- Preview: `预览PPT` (`F5`)
-
-Export behavior:
-- If an inpainted variant exists for a slide, export will prefer it as the background.
-- Text boxes remain editable in PowerPoint.
-
-### 6) Export appearance settings (View tab)
-
-In `视图` tab -> `PPT导出设置`:
-- Enable/disable text box background
-- Pick global background color / alpha
-- Use eyedropper to pick a color from the current image
-- Per-box background: select a box, then adjust its custom background in the right panel
-
-## Keyboard shortcuts
-
-Inside the app, press `F1` to open the shortcut cheat-sheet.
+The GUI, edit contract, repair worker, and export layer are separated into modules. Repair requests use cropped context while retaining the exact edit mask. See [architecture and project structure](docs/architecture.md).
 
 ## Configuration
 
-Settings are stored in `settings.json` (created/updated by the app).
+The default compute budget is **2 CPU threads**. Set `IPDF_CPU_THREADS` to `1`–`4` before launching to tune the budget for the available hardware. Higher-end devices use the same workflow and file format; processor-specific builds are not required for supported platforms.
 
-### OCR model cache
+| Setting | Purpose |
+| --- | --- |
+| `IPDF_CPU_THREADS` | CPU thread budget for local numerical work |
+| `IPDF_DATA_DIR` | Override the per-user settings, cache, recovery and operation-record directory |
+| `IPDF_MODEL_DIR` | Override the model cache directory |
+| `IPDF_EDITOR_PYTHON` | Use a specific editing environment |
+| `IPDF_REPAIR_PYTHON` | Use a specific image-repair environment |
 
-In `设置` tab -> `OCR 设置`:
-- `模型缓存目录 (PADDLE_PDX_CACHE_HOME)`: where PaddleOCR/PaddleX downloads models (`official_models/` will be created under it)
-- Optional: set custom `det/rec` model directories
-- Enable GPU (auto fallback if GPU is not available)
+The repair service listens on `127.0.0.1:18181`. An existing compatible repair endpoint can be configured through the editor settings. Standard local operation does not require an API key or a cloud language model.
 
-## Troubleshooting
+## Development and testing
 
-- `No module named qtawesome`: run `pip install qtawesome`
-- OCR init fails / model download fails:
-  - Check network access (first run needs to download models)
-  - Change model cache dir in `OCR 设置` to a writable folder
-  - For GPU: confirm the correct PaddlePaddle GPU wheel + CUDA runtime
-- PDF import fails:
-  - Ensure `PyMuPDF` is installed (`pip install pymupdf`)
-- IOPaint fails:
-  - Make sure the IOPaint service is running
-  - Verify API URL in `IOPaint 设置` (default: `http://127.0.0.1:8080/api/v1/inpaint`)
+```bash
+python tests/test_contract.py
+python tests/test_platform.py
+python tests/test_desktop.py
+python tests/test_project_export.py
+```
 
-## Project structure
+The desktop tests generate synthetic fixtures locally. They exercise strict matching, partial selection, unrelated-pixel preservation, stale plans, undo/redo, failure and cancellation recovery, project persistence, and document export. CI separates the editor and repair environments and checks the macOS and Windows desktop workflows.
 
-- `main.py`: GUI + workflow (import/OCR/edit/export)
-- `ocr_engine.py`: PaddleOCR wrapper (2.x/3.x compatible)
-- `ppt_export.py`: PPTX generation with editable text boxes
+See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup and review expectations, and [SECURITY.md](SECURITY.md) for handling document data and security reports.
 
-## Credits
+## Attribution and source terms
 
-- PaddleOCR / PaddlePaddle
-- PySide6 (Qt)
-- python-pptx
-- PyMuPDF (PDF import)
-- IOPaint (optional inpaint backend)
-- QtAwesome (icons)
+ReGlyph PDF is maintained as a derivative of [Tansuo2021/OCRPDF-TO-PPT](https://github.com/Tansuo2021/OCRPDF-TO-PPT), with an expanded editing workflow, portable projects, scoped repair, validation, and export handling. Original authorship is preserved. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source provenance and component terms.
 
-## Star / Watch
-
-If this project helps you, please consider starring or watching it on GitHub.
-
-[![GitHub stars](https://img.shields.io/github/stars/Tansuo2021/OCRPDF-TO-PPT?style=social)](https://github.com/Tansuo2021/OCRPDF-TO-PPT/stargazers)
-[![GitHub watchers](https://img.shields.io/github/watchers/Tansuo2021/OCRPDF-TO-PPT?style=social)](https://github.com/Tansuo2021/OCRPDF-TO-PPT/watchers)
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Tansuo2021/OCRPDF-TO-PPT&type=Date)](https://star-history.com/#Tansuo2021/OCRPDF-TO-PPT&Date)
-
-Image/badge providers:
-- https://shields.io/ (badges)
-- https://star-history.com/ (star history images)
+All examples and screenshots in this repository use synthetic content.
