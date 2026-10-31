@@ -7,9 +7,12 @@ ROOT=Path(__file__).resolve().parent
 def data_dir():
     custom=os.environ.get('IPDF_DATA_DIR')
     if custom:return Path(custom).expanduser()
-    if platform.system()=='Windows':return Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'AppData/Local')))/'ReGlyphPDF'
+    if platform.system()=='Windows':
+        base=Path(os.environ['LOCALAPPDATA']) if os.environ.get('LOCALAPPDATA') else Path.home()/'AppData/Local'
+        return base/'ReGlyphPDF'
     if platform.system()=='Darwin':return Path.home()/'Library/Application Support/ReGlyphPDF'
-    return Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'ReGlyphPDF'
+    base=Path(os.environ['XDG_DATA_HOME']) if os.environ.get('XDG_DATA_HOME') else Path.home()/'.local/share'
+    return base/'ReGlyphPDF'
 
 def cache_dir():return data_dir()/'cache'
 

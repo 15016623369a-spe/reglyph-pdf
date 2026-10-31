@@ -10,13 +10,16 @@ class PlatformTests(unittest.TestCase):
   with patch.dict(os.environ,{'LOCALAPPDATA':'C:/Users/Example/AppData/Local'},clear=True),patch.object(config.platform,'system',return_value='Windows'):
    self.assertEqual(str(config.data_dir()).replace('\\','/'),'C:/Users/Example/AppData/Local/ReGlyphPDF')
    self.assertEqual(config.ui_font(),'Microsoft YaHei UI')
+ def test_windows_explicit_directory_does_not_require_home(self):
+  with patch.dict(os.environ,{'LOCALAPPDATA':str(BASE/'local-fixture')},clear=True),patch.object(config.platform,'system',return_value='Windows'),patch.object(config.Path,'home',side_effect=RuntimeError('home unavailable')):
+   self.assertEqual(config.data_dir(),BASE/'local-fixture/ReGlyphPDF')
  def test_per_user_settings_mac(self):
-  with patch.dict(os.environ,{},clear=True),patch.object(config.platform,'system',return_value='Darwin'):
-   self.assertTrue(str(config.data_dir()).endswith('Library/Application Support/ReGlyphPDF'))
+  with patch.dict(os.environ,{},clear=True),patch.object(config.platform,'system',return_value='Darwin'),patch.object(config.Path,'home',return_value=BASE):
+   self.assertTrue(config.data_dir().as_posix().endswith('Library/Application Support/ReGlyphPDF'))
    self.assertEqual(config.ui_font(),'PingFang SC')
  def test_thread_limits_apply_to_all_numeric_libraries(self):
   for requested,expected in [('2',2),('999',4),('0',1),('bad',2)]:
-   with patch.dict(os.environ,{'IPDF_CPU_THREADS':requested},clear=True):
+   with patch.dict(os.environ,{'IPDF_CPU_THREADS':requested,'IPDF_DATA_DIR':str(BASE/'data-fixture')},clear=True):
     self.assertEqual(config.configure_environment(),expected)
     for key in ['OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','VECLIB_MAXIMUM_THREADS','NUMEXPR_NUM_THREADS']:
      self.assertEqual(os.environ[key],str(expected))
