@@ -104,8 +104,10 @@ python tests/test_project_export.py
 
 测试使用运行时生成的合成样本，覆盖精确匹配、勾选范围、区域外像素保留、文档变化检测、失败与取消回退、撤销重做、工程保存和导出。开发说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 来源与署名
+## 项目与维护
 
-ReGlyph PDF 基于 [Tansuo2021/OCRPDF-TO-PPT](https://github.com/Tansuo2021/OCRPDF-TO-PPT) 持续开发，扩展了编辑工作流、便携工程、局部修复、范围校验和导出处理，保留原作者来源。详细信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+ReGlyph PDF 由 [Jace hj](https://github.com/15016623369a-spe) 开发和维护，围绕文档制作中的实际需求，将文字识别、精确替换、局部图像修复与可编辑导出整合为完整的桌面工作流。
+
+组件致谢与来源条款见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
 仓库中的示例和截图全部使用合成内容。

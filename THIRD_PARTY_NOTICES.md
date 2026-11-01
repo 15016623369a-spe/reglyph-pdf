@@ -2,7 +2,7 @@
 
 ## Upstream source
 
-ReGlyph PDF is maintained in the fork network of **Tansuo2021/OCRPDF-TO-PPT**:
+The following source components were incorporated from **Tansuo2021/OCRPDF-TO-PPT**:
 
 - Repository: https://github.com/Tansuo2021/OCRPDF-TO-PPT
 - Inherited areas: desktop canvas and page editing, OCR integration, image helpers, and PowerPoint export.

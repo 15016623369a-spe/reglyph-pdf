@@ -134,8 +134,10 @@ The desktop tests generate synthetic fixtures locally. They exercise strict matc
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup and review expectations, and [SECURITY.md](SECURITY.md) for handling document data and security reports.
 
-## Attribution and source terms
+## Project and maintenance
 
-ReGlyph PDF is maintained as a derivative of [Tansuo2021/OCRPDF-TO-PPT](https://github.com/Tansuo2021/OCRPDF-TO-PPT), with an expanded editing workflow, portable projects, scoped repair, validation, and export handling. Original authorship is preserved. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source provenance and component terms.
+ReGlyph PDF is developed and maintained by [Jace hj](https://github.com/15016623369a-spe). The project brings document recognition, precise replacement, local image repair, and editable export into a dedicated desktop workspace for document production teams.
+
+For component credits and source terms, see [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 All examples and screenshots in this repository use synthetic content.

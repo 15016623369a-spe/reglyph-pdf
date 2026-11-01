@@ -1,4 +1,4 @@
-"""图片pdf文字编辑器 — a focused desktop workflow built on OCRPDF-TO-PPT."""
+"""ReGlyph PDF — precision text editing for scanned PDFs and images."""
 import os,sys,copy,json,re,logging,time
 from platform_config import configure_environment,data_dir,cache_dir,ui_font,initialize_data
 CPU_THREADS=configure_environment()
@@ -552,7 +552,7 @@ class LegacyEditor(core.PPTCloneApp):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide if guide.exists() else ROOT/'README.md')))
 
     def show_about(self):
-        QMessageBox.information(self,APP_NAME,'ReGlyph PDF 1.2.0\nDesktop OCR · Scoped repair · Editable export\n\nDerived from Tansuo2021/OCRPDF-TO-PPT.\nAttribution: THIRD_PARTY_NOTICES.md')
+        QMessageBox.information(self,APP_NAME,'ReGlyph PDF 1.2.0\nDesktop OCR · Scoped repair · Editable export\n\nDeveloped and maintained by Jace hj.\nProject: github.com/15016623369a-spe/reglyph-pdf\nComponent credits: THIRD_PARTY_NOTICES.md')
 
     def show_shortcuts(self):
         QMessageBox.information(self,'常用快捷键','Mac 使用 ⌘，Windows 使用 Ctrl：\nS 保存工程　O 打开工程　F 查找替换\nZ 撤销　Shift+Z 重做\nDelete 删除可编辑框　Esc 清除选区\n拖动文字框移动，拖动四角调整区域。')

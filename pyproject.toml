@@ -1,6 +1,7 @@
 [project]
 name = "reglyph-pdf"
 version = "1.2.0"
+authors = [{name = "Jace hj"}]
 description = "Local-first desktop text editing for scanned PDFs and images"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"

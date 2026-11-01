@@ -3178,7 +3178,7 @@ class PPTCloneApp(QMainWindow):
         self._preview_cleanup_timer.start()
 
     def open_github_repo(self, *args):
-        url = "https://github.com/Tansuo2021/OCRPDF-TO-PPT"
+        url = "https://github.com/15016623369a-spe/reglyph-pdf"
         try:
             QDesktopServices.openUrl(QUrl(url))
             return
@@ -4187,7 +4187,7 @@ class PPTCloneApp(QMainWindow):
 
         # Top-right corner: GitHub open-source link (always visible regardless of tab).
         try:
-            url = "https://github.com/Tansuo2021/OCRPDF-TO-PPT"
+            url = "https://github.com/15016623369a-spe/reglyph-pdf"
             corner = QWidget()
             cl = QHBoxLayout(corner)
             cl.setContentsMargins(0, 0, 8, 0)
